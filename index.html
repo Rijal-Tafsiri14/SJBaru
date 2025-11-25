@@ -1,0 +1,1526 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Aplikasi Surat Jalan</title>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Load JsBarcode library via CDN for client-side barcode generation -->
+    <script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.6/dist/JsBarcode.all.min.js"></script>
+    <!-- Load Inter Font -->
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@100..900&display=swap');
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #f7f9fc;
+        }
+        /* Custom styles for the signature canvas border */
+        #signature-canvas {
+            border: 2px dashed #ccc;
+            cursor: crosshair;
+            touch-action: none; /* Penting untuk interaksi sentuh */
+        }
+        /* Custom styles for print layout */
+        @media print {
+            /* Hide everything except the print-area */
+            body > * {
+                display: none !important;
+            }
+            #print-area {
+                display: block !important;
+                position: absolute;
+                left: 0;
+                top: 0;
+                width: 100%;
+                /* Use A4 size simulation for professional print */
+                min-height: 297mm; /* A4 height */
+                padding: 20mm;
+                box-sizing: border-box;
+            }
+            .no-print {
+                display: none !important;
+            }
+            /* Styling for the print content */
+            #sj-document {
+                box-shadow: none !important;
+                border: none !important; 
+                padding: 0;
+            }
+            /* MENGHAPUS BORDER PADA TABEL */
+            .print-table th, .print-table td {
+                border: none !important;
+                border-bottom: 1px solid #000 !important; 
+                padding: 8px !important;
+            }
+            .print-table thead th {
+                 border-bottom: 2px solid #000 !important; 
+            }
+            .print-table tfoot td {
+                 border-top: 1px solid #000 !important; 
+                 border-bottom: none !important;
+            }
+        }
+
+        /* Styling for autocomplete suggestions */
+        #autocomplete-suggestions {
+            position: absolute;
+            z-index: 10;
+            width: 100%;
+            max-height: 200px;
+            overflow-y: auto;
+            border: 1px solid #ccc;
+            border-top: none;
+            background-color: white;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            border-radius: 0 0 6px 6px;
+        }
+        .suggestion-item {
+            padding: 8px;
+            cursor: pointer;
+            border-bottom: 1px solid #eee;
+        }
+        .suggestion-item:hover {
+            background-color: #f0f0f0;
+        }
+    </style>
+</head>
+<body class="p-4 sm:p-8">
+
+    <div id="app-container" class="max-w-7xl mx-auto bg-white p-6 md:p-10 rounded-xl shadow-2xl">
+        <h1 class="text-3xl font-bold text-gray-800 mb-6 border-b pb-3">Pembuatan Surat Jalan</h1>
+
+        <!-- Temporary Message Box for alerts/confirmation (instead of alert/confirm) -->
+        <div id="message-box" class="fixed top-0 right-0 m-4 p-4 text-sm rounded-lg shadow-lg z-50 transition duration-300 transform translate-x-full" style="display: none;"></div>
+
+        <!-- Section 1: Form Input Detail Surat Jalan -->
+        <div class="mb-8 p-6 bg-gray-50 rounded-lg border">
+            <h2 class="text-xl font-semibold text-gray-700 mb-4">Detail Pengiriman & Pengirim</h2>
+            <form id="sj-detail-form" class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div>
+                    <label for="divisi_tujuan" class="block text-sm font-medium text-gray-700">Divisi Tujuan <span class="text-red-500">*</span></label>
+                    <input type="text" id="divisi_tujuan" name="divisi_tujuan" required class="mt-1 block w-full rounded-md border-gray-300 shadow-sm p-2 border focus:border-blue-500 focus:ring-blue-500">
+                </div>
+                <div>
+                    <label for="sender_name" class="block text-sm font-medium text-gray-700">Pengirim <span class="text-red-500">*</span></label>
+                    <select id="sender_name" required class="mt-1 block w-full rounded-md border-gray-300 shadow-sm p-2 border focus:border-blue-500 focus:ring-blue-500 bg-white">
+                        <!-- Options will be added by JS -->
+                    </select>
+                </div>
+                <div>
+                    <label for="keterangan" class="block text-sm font-medium text-gray-700">Keterangan</label>
+                    <input type="text" id="keterangan" name="keterangan" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm p-2 border focus:border-blue-500 focus:ring-blue-500">
+                </div>
+            </form>
+            
+            <!-- Signature Management Button -->
+            <div class="mt-4">
+                 <button id="manage-signature-btn" class="bg-indigo-500 text-white p-2 text-sm rounded-md hover:bg-indigo-600 transition duration-150 shadow-md disabled:bg-indigo-300" disabled>
+                    Atur Tanda Tangan untuk [Pilih Pengirim]
+                </button>
+            </div>
+        </div>
+
+        <!-- Signature Modal (Hidden by default) -->
+        <div id="signature-modal" class="fixed inset-0 bg-gray-900 bg-opacity-75 z-50 flex justify-center items-center hidden">
+            <div class="bg-white rounded-xl p-6 shadow-2xl w-full max-w-lg mx-4">
+                <h3 class="text-xl font-bold mb-4">Input Tanda Tangan Pengirim (<span id="modal-sender-name"></span>)</h3>
+                <p class="text-sm text-gray-600 mb-4">Gunakan mouse atau sentuhan untuk menggambar tanda tangan Anda di kotak di bawah.</p>
+                
+                <canvas id="signature-canvas" width="400" height="150" class="w-full"></canvas>
+                
+                <div class="flex justify-between mt-4 gap-2">
+                    <button id="clear-signature-btn" class="flex-1 bg-red-500 text-white p-2 rounded-md hover:bg-red-600 transition duration-150">Hapus</button>
+                    <button id="save-signature-btn" class="flex-1 bg-green-600 text-white p-2 rounded-md hover:bg-green-700 transition duration-150">Simpan Tanda Tangan</button>
+                    <button id="close-signature-modal" class="flex-1 bg-gray-300 text-gray-800 p-2 rounded-md hover:bg-gray-400 transition duration-150">Tutup</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Section 2: Form Input Barang -->
+        <div class="mb-8 p-6 bg-white rounded-lg border shadow-inner">
+            <div class="flex justify-between items-center mb-4">
+                <h2 class="text-xl font-semibold text-gray-700">Input Barang</h2>
+                <!-- Tombol Master Item -->
+                <button id="open-master-modal-btn" class="bg-blue-500 text-white p-2 text-sm rounded-md hover:bg-blue-600 transition duration-150 shadow-md">
+                    Kelola Katalog Barang
+                </button>
+            </div>
+            
+            <form id="item-form" class="grid grid-cols-2 md:grid-cols-6 gap-4 items-end">
+                <div class="col-span-2 relative">
+                    <label for="item_name" class="block text-sm font-medium text-gray-700">Nama Barang <span class="text-red-500">*</span></label>
+                    <input type="text" id="item_name" required class="mt-1 block w-full rounded-md border-gray-300 shadow-sm p-2 border focus:border-blue-500 focus:ring-blue-500">
+                    <!-- Autocomplete Suggestions Container -->
+                    <div id="autocomplete-suggestions" class="absolute top-full left-0 hidden"></div>
+                </div>
+                <div>
+                    <label for="item_qty" class="block text-sm font-medium text-gray-700">Qty <span class="text-red-500">*</span></label>
+                    <input type="number" id="item_qty" required min="1" value="1" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm p-2 border focus:border-blue-500 focus:ring-blue-500">
+                </div>
+                <div>
+                    <label for="item_unit" class="block text-sm font-medium text-gray-700">Satuan <span class="text-red-500">*</span></label>
+                    <select id="item_unit" required class="mt-1 block w-full rounded-md border-gray-300 shadow-sm p-2 border focus:border-blue-500 focus:ring-blue-500 bg-white">
+                        <option value="pcs">pcs</option>
+                        <option value="koli">koli</option>
+                        <option value="box">box</option>
+                        <option value="bundle">bundle</option>
+                    </select>
+                </div>
+                <div class="col-span-1">
+                    <label for="item_condition" class="block text-sm font-medium text-gray-700">Kondisi</label>
+                    <input type="text" id="item_condition" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm p-2 border focus:border-blue-500 focus:ring-blue-500" value="Baik">
+                </div>
+                <div class="col-span-2 md:col-span-1">
+                    <input type="hidden" id="item_id">
+                    <button type="submit" id="add-edit-btn" class="w-full bg-blue-600 text-white p-2 rounded-md hover:bg-blue-700 transition duration-150 shadow-md">Tambah Barang</button>
+                </div>
+            </form>
+        </div>
+        
+        <!-- Master Item Management Modal (NEW) -->
+        <div id="master-item-modal" class="fixed inset-0 bg-gray-900 bg-opacity-75 z-50 flex justify-center items-center hidden">
+            <div class="bg-white rounded-xl p-8 shadow-2xl w-full max-w-3xl mx-4 max-h-[90vh] overflow-y-auto">
+                <h3 class="text-2xl font-bold text-gray-800 mb-6 border-b pb-2">Kelola Katalog Barang Master</h3>
+                
+                <!-- Master Item Input Form -->
+                <form id="master-item-form" class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6 p-4 border rounded-lg bg-blue-50">
+                    <div class="col-span-2">
+                        <label for="master_item_name" class="block text-sm font-medium text-gray-700">Nama Barang <span class="text-red-500">*</span></label>
+                        <input type="text" id="master_item_name" required class="mt-1 block w-full rounded-md p-2 border">
+                    </div>
+                    <div>
+                        <label for="master_item_unit" class="block text-sm font-medium text-gray-700">Satuan Default <span class="text-red-500">*</span></label>
+                        <select id="master_item_unit" required class="mt-1 block w-full rounded-md p-2 border bg-white">
+                            <option value="pcs">pcs</option>
+                            <option value="koli">koli</option>
+                            <option value="box">box</option>
+                            <option value="bundle">bundle</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label for="master_item_condition" class="block text-sm font-medium text-gray-700">Kondisi Default</label>
+                        <input type="text" id="master_item_condition" value="Baik" class="mt-1 block w-full rounded-md p-2 border">
+                    </div>
+                    <div class="col-span-4 md:col-span-4">
+                        <input type="hidden" id="master_item_id">
+                        <button type="submit" id="master-add-edit-btn" class="w-full bg-green-600 text-white p-2 rounded-md hover:bg-green-700 transition duration-150 shadow-md">Tambah ke Katalog</button>
+                    </div>
+                </form>
+
+                <!-- Master Item Table -->
+                <h4 class="text-lg font-semibold text-gray-700 mb-3">Daftar Barang Master Tersimpan</h4>
+                <div class="overflow-x-auto rounded-lg shadow-lg border mb-6">
+                    <table class="min-w-full divide-y divide-gray-200">
+                        <thead class="bg-gray-100">
+                            <tr>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Nama Barang</th>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-24">Satuan</th>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-32">Kondisi Default</th>
+                                <th class="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider w-24">Aksi</th>
+                            </tr>
+                        </thead>
+                        <tbody id="master-items-table-body" class="bg-white divide-y divide-gray-200">
+                            <!-- Master items will be inserted here -->
+                        </tbody>
+                    </table>
+                    <p id="no-master-message" class="text-center text-gray-500 p-4" style="display: none;">Katalog barang masih kosong.</p>
+                </div>
+
+                <div class="flex justify-end">
+                    <button id="close-master-modal-btn" class="bg-gray-300 text-gray-800 p-2 rounded-md hover:bg-gray-400 transition duration-150">Selesai & Tutup</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Section 3: Tabel Barang Sementara -->
+        <div class="mb-10">
+            <h2 class="text-xl font-semibold text-gray-700 mb-4">Daftar Barang yang Diinput</h2>
+            <div class="overflow-x-auto rounded-lg shadow-lg border">
+                <table class="min-w-full divide-y divide-gray-200">
+                    <thead class="bg-blue-50">
+                        <tr>
+                            <th scope="col" class="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">No.</th>
+                            <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer">Nama Barang</th>
+                            <th scope="col" class="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Qty</th>
+                            <th scope="col" class="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Satuan</th>
+                            <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Kondisi</th>
+                            <th scope="col" class="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">Aksi</th>
+                        </tr>
+                    </thead>
+                    <tbody id="items-table-body" class="bg-white divide-y divide-gray-200">
+                        <!-- Items will be inserted here -->
+                    </tbody>
+                    <tfoot class="bg-gray-100">
+                        <tr>
+                            <td colspan="2" class="px-6 py-3 text-right text-sm font-bold text-gray-800">Total Qty:</td>
+                            <td id="total-qty" class="px-3 py-3 text-left text-sm font-bold text-blue-600">0</td>
+                            <td colspan="3"></td>
+                        </tr>
+                    </tfoot>
+                </table>
+            </div>
+        </div>
+
+        <!-- Section 4: Actions (Generate & Save) -->
+        <div class="flex flex-col sm:flex-row gap-4 mb-10 border-t pt-6">
+            <button id="generate-sj-btn" class="flex-1 bg-green-600 text-white p-3 rounded-md hover:bg-green-700 transition duration-150 shadow-lg text-lg font-semibold">
+                <span class="mr-2">📄</span> Generate Surat Jalan & Cetak
+            </button>
+            <button id="save-sj-btn" class="flex-1 bg-yellow-500 text-gray-900 p-3 rounded-md hover:bg-yellow-600 transition duration-150 shadow-lg text-lg font-semibold">
+                <span class="mr-2">💾</span> Simpan Manual (ke Riwayat & Reset Form)
+            </button>
+        </div>
+        
+        <!-- Hidden input for file upload -->
+        <input type="file" id="proof-upload-input" accept="image/*" class="hidden">
+        <!-- Hidden input for CSV import -->
+        <input type="file" id="import-csv-input" accept=".csv" class="hidden">
+
+
+        <!-- Section 5: History Management (Toggled) -->
+        <div id="history-section" class="mt-10 pt-8 border-t-4 border-blue-600">
+            <h2 class="text-2xl font-bold text-gray-800 mb-6 flex justify-between items-center">
+                Riwayat Pengiriman
+                <!-- Toggle Button Added Here -->
+                <div class="flex gap-3">
+                    <button id="import-csv-btn" class="text-sm bg-orange-500 text-white hover:bg-orange-600 p-2 rounded-lg font-semibold transition duration-150">
+                        <svg class="w-4 h-4 inline mr-1 -mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg>
+                        Import CSV
+                    </button>
+                    <button id="export-csv-btn" class="text-sm bg-indigo-500 text-white hover:bg-indigo-600 p-2 rounded-lg font-semibold transition duration-150">
+                        <svg class="w-4 h-4 inline mr-1 -mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>
+                        Ekspor CSV
+                    </button>
+                    <button id="toggle-history-btn" class="text-sm bg-gray-200 hover:bg-gray-300 p-2 rounded-lg font-semibold transition duration-150">
+                        Tampilkan Riwayat
+                    </button>
+                </div>
+            </h2>
+            
+            <!-- History Content Wrapper (Hidden by default) -->
+            <div id="history-content" class="hidden">
+                <div class="mb-4">
+                    <input type="text" id="history-search" placeholder="Cari berdasarkan No. Surat atau Divisi Tujuan..." class="p-2 border rounded-md w-full md:w-1/3 focus:border-blue-500 focus:ring-blue-500">
+                </div>
+                <div class="overflow-x-auto rounded-lg shadow-lg border">
+                    <table class="min-w-full divide-y divide-gray-200">
+                        <thead class="bg-blue-50">
+                            <tr>
+                                <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer history-sort-header" data-sort-by="sjNumber">No. Surat Jalan <span class="sort-icon" data-sort-by="sjNumber"></span></th>
+                                <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer history-sort-header" data-sort-by="timestamp">Tanggal <span class="sort-icon" data-sort-by="timestamp">▼</span></th>
+                                <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer history-sort-header" data-sort-by="sender">Pengirim <span class="sort-icon" data-sort-by="sender"></span></th>
+                                <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer history-sort-header" data-sort-by="divisiTujuan">Divisi Tujuan <span class="sort-icon" data-sort-by="divisiTujuan"></span></th>
+                                <th scope="col" class="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">Bukti</th>
+                                <th scope="col" class="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">Aksi</th>
+                            </tr>
+                        </thead>
+                        <tbody id="history-table-body" class="bg-white divide-y divide-gray-200">
+                            <!-- History data will be inserted here -->
+                        </tbody>
+                    </table>
+                    <p id="no-history-message" class="text-center text-gray-500 mt-4" style="display: none;">Belum ada riwayat tersimpan.</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Hidden Print Area -->
+    <div id="print-area" class="hidden">
+        <div id="sj-document" class="p-8 bg-white max-w-4xl mx-auto shadow-xl">
+            <!-- Content will be generated here -->
+        </div>
+    </div>
+
+    <script>
+        // --- DATA MANAGEMENT (localStorage) ---
+        // Kunci penyimpanan utama untuk riwayat Surat Jalan
+        const LOCAL_STORAGE_KEY = 'suratJalanHistory';
+        // Kunci penyimpanan untuk Tanda Tangan Digital Pengirim
+        const SIGNATURE_STORAGE_KEY = 'senderSignatures';
+        // Kunci penyimpanan BARU untuk Katalog Barang Master
+        const MASTER_ITEMS_STORAGE_KEY = 'masterItemsCatalog'; 
+        
+        let currentItems = [];
+        let historyData = JSON.parse(localStorage.getItem(LOCAL_STORAGE_KEY)) || [];
+        let signatures = JSON.parse(localStorage.getItem(SIGNATURE_STORAGE_KEY)) || {};
+        // Struktur data master items
+        let masterItems = JSON.parse(localStorage.getItem(MASTER_ITEMS_STORAGE_KEY)) || []; 
+        let currentUploadHistoryId = null; 
+        
+        // Daftar nama pengirim yang tersedia
+        const SENDER_OPTIONS = [
+            "Adi Wibowo (Warehouse)",
+            "Budi Santoso (Logistik)",
+            "Citra Dewi (Internal)",
+            "Pengirim Lain"
+        ];
+
+        // Status penyortiran riwayat
+        let currentSort = {
+            by: 'timestamp', // Default sort by date
+            direction: 'desc' // Default newest first
+        };
+
+        // Header CSV yang diharapkan
+        const EXPECTED_CSV_HEADERS = [
+            "No. Surat Jalan", 
+            "Tanggal (Timestamp)", 
+            "Tanggal (Format Teks)", 
+            "Pengirim", 
+            "Divisi Tujuan", 
+            "Keterangan", 
+            "Total Qty", 
+            "Bukti File", 
+            "Detail Barang"
+        ];
+
+
+        // --- DOM Elements ---
+        const sjDetailForm = document.getElementById('sj-detail-form');
+        const itemForm = document.getElementById('item-form');
+        const itemsTableBody = document.getElementById('items-table-body');
+        const totalQtyElement = document.getElementById('total-qty');
+        const addItemBtn = document.getElementById('add-edit-btn');
+        const generateBtn = document.getElementById('generate-sj-btn');
+        const saveBtn = document.getElementById('save-sj-btn');
+        const historyTableBody = document.getElementById('history-table-body');
+        const historySearch = document.getElementById('history-search');
+        const messageBox = document.getElementById('message-box');
+        const proofUploadInput = document.getElementById('proof-upload-input');
+        const senderSelect = document.getElementById('sender_name');
+
+        // Signature Elements
+        const signatureModal = document.getElementById('signature-modal');
+        const signatureCanvas = document.getElementById('signature-canvas');
+        const ctx = signatureCanvas.getContext('2d');
+        const clearSignatureBtn = document.getElementById('clear-signature-btn');
+        const saveSignatureBtn = document.getElementById('save-signature-btn');
+        const closeSignatureModal = document.getElementById('close-signature-modal');
+        const manageSignatureBtn = document.getElementById('manage-signature-btn');
+        const modalSenderName = document.getElementById('modal-sender-name');
+        
+        // History Toggle Elements
+        const historyContent = document.getElementById('history-content');
+        const toggleHistoryBtn = document.getElementById('toggle-history-btn');
+        const exportCsvBtn = document.getElementById('export-csv-btn');
+        const importCsvBtn = document.getElementById('import-csv-btn'); // NEW
+        const importCsvInput = document.getElementById('import-csv-input'); // NEW
+        
+        // Master Item Elements
+        const masterItemModal = document.getElementById('master-item-modal');
+        const openMasterModalBtn = document.getElementById('open-master-modal-btn');
+        const closeMasterModalBtn = document.getElementById('close-master-modal-btn');
+        const masterItemForm = document.getElementById('master-item-form');
+        const masterItemsTableBody = document.getElementById('master-items-table-body');
+        const masterAddEditBtn = document.getElementById('master-add-edit-btn');
+        const noMasterMessage = document.getElementById('no-master-message');
+        const itemInputName = document.getElementById('item_name');
+        const itemInputUnit = document.getElementById('item_unit');
+        const itemInputCondition = document.getElementById('item_condition');
+        const autocompleteSuggestions = document.getElementById('autocomplete-suggestions');
+        
+        let isHistoryVisible = false; 
+
+        // --- Utility Functions ---
+
+        /** Menampilkan pesan singkat di sudut kanan atas */
+        function showMessage(text, type = 'success') {
+            messageBox.textContent = text;
+            messageBox.style.display = 'block';
+
+            let bgColor, textColor;
+            if (type === 'success') {
+                bgColor = 'bg-green-100';
+                textColor = 'text-green-800';
+            } else if (type === 'error') {
+                bgColor = 'bg-red-100';
+                textColor = 'text-red-800';
+            } else { // info
+                bgColor = 'bg-blue-100';
+                textColor = 'text-blue-800';
+            }
+
+            messageBox.className = `fixed top-0 right-0 m-4 p-4 text-sm rounded-lg shadow-lg z-50 transition duration-300 ${bgColor} ${textColor}`;
+            messageBox.style.transform = 'translateX(0)';
+
+            setTimeout(() => {
+                messageBox.style.transform = 'translateX(100%)';
+                setTimeout(() => { messageBox.style.display = 'none'; }, 300);
+            }, 3000);
+        }
+
+        /** Menghitung total kuantitas dari semua barang */
+        function calculateTotalQty() {
+            const total = currentItems.reduce((sum, item) => sum + parseInt(item.qty), 0);
+            totalQtyElement.textContent = total;
+        }
+
+        /** Mendapatkan nomor Surat Jalan unik otomatis */
+        function getNewSuratJalanNumber() {
+            const date = new Date();
+            const yyyy = date.getFullYear();
+            const mm = String(date.getMonth() + 1).padStart(2, '0');
+            const dd = String(date.getDate()).padStart(2, '0');
+            const today = `${yyyy}${mm}${dd}`;
+
+            // Mencari jumlah entri yang disimpan hari ini untuk mendapatkan index unik
+            const existingCount = historyData.filter(h => h.sjNumber.startsWith(`SJ/${today}`)).length;
+            const newIndex = String(existingCount + 1).padStart(3, '0');
+
+            return `SJ/${today}/${newIndex}`; 
+        }
+
+        /** Fungsi untuk menampilkan/menyembunyikan bagian riwayat */
+        function toggleHistoryVisibility() {
+            isHistoryVisible = !isHistoryVisible;
+            
+            if (isHistoryVisible) {
+                historyContent.classList.remove('hidden');
+                toggleHistoryBtn.textContent = 'Sembunyikan Riwayat';
+            } else {
+                historyContent.classList.add('hidden');
+                toggleHistoryBtn.textContent = 'Tampilkan Riwayat';
+            }
+        }
+
+
+        // --- SENDER & SIGNATURE MANAGEMENT ---
+        
+        /** Mengisi dropdown Pengirim */
+        function populateSenderSelect() {
+            senderSelect.innerHTML = '<option value="" disabled selected>-- Pilih Pengirim --</option>';
+            SENDER_OPTIONS.forEach(sender => {
+                const option = document.createElement('option');
+                option.value = sender;
+                option.textContent = sender;
+                senderSelect.appendChild(option);
+            });
+        }
+        
+        /** Memuat tanda tangan yang tersimpan ke canvas */
+        function loadSignatureToCanvas(senderName) {
+            clearCanvas();
+            const base64Data = signatures[senderName];
+            if (base64Data) {
+                const img = new Image();
+                img.onload = function() {
+                    ctx.drawImage(img, 0, 0);
+                };
+                img.src = base64Data;
+                showMessage(`Tanda tangan untuk ${senderName} berhasil dimuat.`, 'info');
+            } else {
+                showMessage(`Tanda tangan untuk ${senderName} belum ada. Silakan gambar.`, 'info');
+            }
+        }
+        
+        /** Handler saat Pengirim dipilih */
+        senderSelect.addEventListener('change', () => {
+            const selectedSender = senderSelect.value;
+            if (selectedSender) {
+                manageSignatureBtn.disabled = false;
+                manageSignatureBtn.textContent = `Atur Tanda Tangan untuk ${selectedSender}`;
+            } else {
+                manageSignatureBtn.disabled = true;
+                manageSignatureBtn.textContent = 'Atur Tanda Tangan untuk [Pilih Pengirim]';
+            }
+        });
+        
+        /** Membuka Modal Tanda Tangan */
+        manageSignatureBtn.addEventListener('click', () => {
+            const selectedSender = senderSelect.value;
+            if (!selectedSender) {
+                showMessage('Pilih Pengirim terlebih dahulu.', 'error');
+                return;
+            }
+            modalSenderName.textContent = selectedSender;
+            loadSignatureToCanvas(selectedSender);
+            signatureModal.classList.remove('hidden');
+        });
+        
+        /** Menutup Modal Tanda Tangan */
+        closeSignatureModal.addEventListener('click', () => {
+            signatureModal.classList.add('hidden');
+        });
+
+        // --- CANVAS SIGNATURE LOGIC ---
+        let isDrawing = false;
+        let lastX = 0;
+        let lastY = 0;
+        
+        function clearCanvas() {
+            ctx.clearRect(0, 0, signatureCanvas.width, signatureCanvas.height);
+            ctx.fillStyle = "#fff";
+            ctx.fillRect(0, 0, signatureCanvas.width, signatureCanvas.height);
+            ctx.strokeStyle = '#000';
+            ctx.lineWidth = 2;
+            ctx.lineCap = 'round';
+        }
+        
+        // Initialize canvas context style
+        clearCanvas();
+        
+        // Mouse/Touch position utility
+        function getCoords(e) {
+            const rect = signatureCanvas.getBoundingClientRect();
+            let x, y;
+
+            if (e.touches && e.touches.length > 0) {
+                x = e.touches[0].clientX - rect.left;
+                y = e.touches[0].clientY - rect.top;
+            } else {
+                x = e.clientX - rect.left;
+                y = e.clientY - rect.top;
+            }
+            return { x, y };
+        }
+        
+        // Drawing functions
+        function draw(e) {
+            if (!isDrawing) return;
+            
+            const { x, y } = getCoords(e);
+            
+            ctx.beginPath();
+            ctx.moveTo(lastX, lastY);
+            ctx.lineTo(x, y);
+            ctx.stroke();
+            
+            [lastX, lastY] = [x, y];
+        }
+
+        function startDrawing(e) {
+            e.preventDefault();
+            isDrawing = true;
+            [lastX, lastY] = [getCoords(e).x, getCoords(e).y];
+        }
+        
+        function stopDrawing(e) {
+            isDrawing = false;
+        }
+
+        // Event Listeners for Canvas (Mouse & Touch)
+        signatureCanvas.addEventListener('mousedown', startDrawing);
+        signatureCanvas.addEventListener('mousemove', draw);
+        signatureCanvas.addEventListener('mouseup', stopDrawing);
+        signatureCanvas.addEventListener('mouseout', stopDrawing);
+        
+        signatureCanvas.addEventListener('touchstart', startDrawing);
+        signatureCanvas.addEventListener('touchmove', draw);
+        signatureCanvas.addEventListener('touchend', stopDrawing);
+        signatureCanvas.addEventListener('touchcancel', stopDrawing);
+
+        // Clear button
+        clearSignatureBtn.addEventListener('click', clearCanvas);
+        
+        // Save button
+        saveSignatureBtn.addEventListener('click', () => {
+            const selectedSender = modalSenderName.textContent;
+            // Check if the canvas is blank (by comparing with a blank canvas)
+            const blankCanvas = document.createElement('canvas');
+            blankCanvas.width = signatureCanvas.width;
+            blankCanvas.height = signatureCanvas.height;
+            const blankCtx = blankCanvas.getContext('2d');
+            blankCtx.fillStyle = "#fff";
+            blankCtx.fillRect(0, 0, signatureCanvas.width, signatureCanvas.height);
+            
+            const isBlank = signatureCanvas.toDataURL() === blankCanvas.toDataURL();
+            
+            if (isBlank) {
+                showMessage('Harap gambar tanda tangan Anda sebelum menyimpan.', 'error');
+                return;
+            }
+
+            const base64Data = signatureCanvas.toDataURL('image/png');
+            signatures[selectedSender] = base64Data;
+            localStorage.setItem(SIGNATURE_STORAGE_KEY, JSON.stringify(signatures));
+            
+            signatureModal.classList.add('hidden');
+            showMessage(`Tanda tangan untuk ${selectedSender} berhasil disimpan!`, 'success');
+        });
+
+
+        // --- MASTER ITEM MANAGEMENT (LOGIKA MASTER DATA) ---
+        
+        /** Menyimpan data master ke localStorage */
+        function saveMasterItems() {
+            localStorage.setItem(MASTER_ITEMS_STORAGE_KEY, JSON.stringify(masterItems));
+        }
+
+        /** Merender tabel barang master di modal */
+        function renderMasterItems() {
+            masterItemsTableBody.innerHTML = '';
+            
+            if (masterItems.length === 0) {
+                noMasterMessage.style.display = 'block';
+                return;
+            } else {
+                noMasterMessage.style.display = 'none';
+            }
+
+            masterItems.forEach(item => {
+                const row = masterItemsTableBody.insertRow();
+                row.className = 'hover:bg-gray-50';
+                row.innerHTML = `
+                    <td class="px-6 py-3 whitespace-nowrap text-sm font-medium text-gray-900">${item.name}</td>
+                    <td class="px-6 py-3 whitespace-nowrap text-sm text-gray-500">${item.unit}</td>
+                    <td class="px-6 py-3 whitespace-nowrap text-sm text-gray-500">${item.condition}</td>
+                    <td class="px-6 py-3 whitespace-nowrap text-center text-sm font-medium">
+                        <button onclick="editMasterItem('${item.id}')" class="text-indigo-600 hover:text-indigo-900 mr-2 p-1 rounded-md hover:bg-indigo-100 transition duration-150">Edit</button>
+                        <button onclick="deleteMasterItem('${item.id}')" class="text-red-600 hover:text-red-900 p-1 rounded-md hover:bg-red-100 transition duration-150">Hapus</button>
+                    </td>
+                `;
+            });
+        }
+        
+        /** Handler untuk form Tambah/Edit Master Item */
+        masterItemForm.addEventListener('submit', (e) => {
+            e.preventDefault();
+            
+            const name = document.getElementById('master_item_name').value.trim();
+            const unit = document.getElementById('master_item_unit').value;
+            const condition = document.getElementById('master_item_condition').value.trim();
+            const id = document.getElementById('master_item_id').value;
+
+            if (!name) {
+                showMessage('Nama Barang Master wajib diisi.', 'error');
+                return;
+            }
+            
+            // Check for duplicate name (case-insensitive) if not editing
+            const isDuplicate = masterItems.some(item => 
+                item.name.toLowerCase() === name.toLowerCase() && item.id !== id
+            );
+
+            if (isDuplicate) {
+                showMessage('Nama barang ini sudah ada di katalog master.', 'error');
+                return;
+            }
+
+
+            const newItem = { name, unit, condition, id: id || crypto.randomUUID() };
+
+            if (id) {
+                // Edit existing item
+                const index = masterItems.findIndex(item => item.id === id);
+                if (index !== -1) {
+                    masterItems[index] = newItem;
+                    showMessage('Barang Master berhasil diperbarui.', 'success');
+                }
+            } else {
+                // Add new item
+                masterItems.push(newItem);
+                showMessage('Barang Master berhasil ditambahkan.', 'success');
+            }
+            
+            saveMasterItems();
+            renderMasterItems();
+
+            // Reset form
+            masterItemForm.reset();
+            document.getElementById('master_item_id').value = '';
+            document.getElementById('master_item_condition').value = 'Baik';
+            masterAddEditBtn.textContent = 'Tambah ke Katalog';
+        });
+
+        /** Mengisi form untuk edit Master Item */
+        window.editMasterItem = function(id) {
+            const itemToEdit = masterItems.find(item => item.id === id);
+            if (!itemToEdit) return;
+
+            document.getElementById('master_item_name').value = itemToEdit.name;
+            document.getElementById('master_item_unit').value = itemToEdit.unit;
+            document.getElementById('master_item_condition').value = itemToEdit.condition;
+            document.getElementById('master_item_id').value = itemToEdit.id;
+            masterAddEditBtn.textContent = 'Simpan Perubahan Master';
+        };
+
+        /** Menghapus Master Item */
+        window.deleteMasterItem = function(id) {
+            // Menggunakan prompt sebagai pengganti confirm()
+            const result = window.prompt(`Yakin ingin menghapus barang ini dari Katalog Master?\nKetik 'YA' (huruf kapital) untuk melanjutkan.`);
+            
+            if (result === 'YA') {
+                masterItems = masterItems.filter(item => item.id !== id);
+                saveMasterItems();
+                renderMasterItems();
+                showMessage('Barang Master berhasil dihapus.', 'info');
+            }
+        };
+
+        /** Membuka Modal Master Item */
+        openMasterModalBtn.addEventListener('click', () => {
+            renderMasterItems();
+            masterItemModal.classList.remove('hidden');
+        });
+        
+        /** Menutup Modal Master Item */
+        closeMasterModalBtn.addEventListener('click', () => {
+            masterItemModal.classList.add('hidden');
+            // Reset form saat ditutup
+            masterItemForm.reset();
+            document.getElementById('master_item_id').value = '';
+            document.getElementById('master_item_condition').value = 'Baik';
+            masterAddEditBtn.textContent = 'Tambah ke Katalog';
+        });
+
+        // --- AUTOCOMPLETE LOGIC for item_name ---
+        itemInputName.addEventListener('input', () => {
+            const query = itemInputName.value.trim().toLowerCase();
+            autocompleteSuggestions.innerHTML = '';
+            
+            if (query.length === 0) {
+                autocompleteSuggestions.classList.add('hidden');
+                return;
+            }
+
+            const filteredSuggestions = masterItems.filter(item => 
+                item.name.toLowerCase().includes(query)
+            );
+
+            if (filteredSuggestions.length > 0) {
+                filteredSuggestions.forEach(item => {
+                    const suggestionDiv = document.createElement('div');
+                    suggestionDiv.className = 'suggestion-item';
+                    suggestionDiv.textContent = `${item.name} (${item.unit}) - Kondisi: ${item.condition}`;
+                    suggestionDiv.addEventListener('click', () => {
+                        // Isi form utama dengan data master yang dipilih
+                        itemInputName.value = item.name;
+                        itemInputUnit.value = item.unit;
+                        itemInputCondition.value = item.condition;
+                        
+                        autocompleteSuggestions.classList.add('hidden');
+                        showMessage(`Data master untuk ${item.name} berhasil dimuat.`, 'info');
+                    });
+                    autocompleteSuggestions.appendChild(suggestionDiv);
+                });
+                autocompleteSuggestions.classList.remove('hidden');
+            } else {
+                autocompleteSuggestions.classList.add('hidden');
+            }
+        });
+        
+        // Menyembunyikan saran ketika fokus hilang (kecuali diklik)
+        document.addEventListener('click', (e) => {
+            if (!itemInputName.contains(e.target) && !autocompleteSuggestions.contains(e.target)) {
+                autocompleteSuggestions.classList.add('hidden');
+            }
+        });
+
+
+        // --- CURRENT ITEM MANAGEMENT ---
+
+        /** Merender tabel barang yang sedang diinput */
+        function renderCurrentItems() {
+            itemsTableBody.innerHTML = '';
+
+            if (currentItems.length === 0) {
+                itemsTableBody.innerHTML = `<tr><td colspan="6" class="p-4 text-center text-gray-500">Belum ada barang di daftar.</td></tr>`;
+            }
+
+            currentItems.forEach((item, index) => {
+                const row = itemsTableBody.insertRow();
+                row.className = 'hover:bg-gray-50';
+                row.innerHTML = `
+                    <td class="px-3 py-3 whitespace-nowrap text-sm font-medium text-gray-900">${index + 1}</td>
+                    <td class="px-6 py-3 whitespace-nowrap text-sm text-gray-500">${item.name}</td>
+                    <td class="px-3 py-3 whitespace-nowrap text-sm text-gray-500">${item.qty}</td>
+                    <td class="px-3 py-3 whitespace-nowrap text-sm text-gray-500">${item.unit}</td>
+                    <td class="px-6 py-3 whitespace-nowrap text-sm text-gray-500">${item.condition}</td>
+                    <td class="px-6 py-3 whitespace-nowrap text-center text-sm font-medium">
+                        <button onclick="editItem('${item.id}')" class="text-indigo-600 hover:text-indigo-900 mr-2 p-1 rounded-md hover:bg-indigo-100 transition duration-150">Edit</button>
+                        <button onclick="deleteItem('${item.id}')" class="text-red-600 hover:text-red-900 p-1 rounded-md hover:bg-red-100 transition duration-150">Hapus</button>
+                    </td>
+                `;
+            });
+            calculateTotalQty();
+        }
+
+        /** Handler untuk form tambah/edit barang */
+        itemForm.addEventListener('submit', (e) => {
+            e.preventDefault();
+
+            const name = document.getElementById('item_name').value.trim();
+            const qty = parseInt(document.getElementById('item_qty').value);
+            const unit = document.getElementById('item_unit').value;
+            const condition = document.getElementById('item_condition').value.trim() || 'Baik';
+            const id = document.getElementById('item_id').value;
+
+            // Validasi
+            if (!name || isNaN(qty) || qty < 1) {
+                showMessage('Nama Barang dan Qty (minimal 1) wajib diisi.', 'error');
+                return;
+            }
+
+            const newItem = {
+                name,
+                qty,
+                unit,
+                condition,
+                id: id || crypto.randomUUID(),
+            };
+
+            if (id) {
+                // Edit existing item
+                const index = currentItems.findIndex(item => item.id === id);
+                if (index !== -1) {
+                    currentItems[index] = newItem;
+                    showMessage('Barang berhasil diperbarui.', 'success');
+                }
+            } else {
+                // Add new item
+                currentItems.push(newItem);
+                showMessage('Barang berhasil ditambahkan.', 'success');
+            }
+
+            // Reset form
+            itemForm.reset();
+            document.getElementById('item_id').value = '';
+            document.getElementById('item_qty').value = '1';
+            addItemBtn.textContent = 'Tambah Barang';
+
+            renderCurrentItems();
+        });
+
+        /** Mengisi form untuk proses edit */
+        window.editItem = function(id) {
+            const itemToEdit = currentItems.find(item => item.id === id);
+            if (!itemToEdit) return;
+
+            document.getElementById('item_name').value = itemToEdit.name;
+            document.getElementById('item_qty').value = itemToEdit.qty;
+            document.getElementById('item_unit').value = itemToEdit.unit;
+            document.getElementById('item_condition').value = itemToEdit.condition;
+            document.getElementById('item_id').value = itemToEdit.id;
+            addItemBtn.textContent = 'Simpan Perubahan';
+        };
+
+        /** Menghapus barang dari daftar sementara */
+        window.deleteItem = function(id) {
+            currentItems = currentItems.filter(item => item.id !== id); // Fix: filter out the item with the matching ID
+            renderCurrentItems();
+            showMessage('Barang berhasil dihapus dari daftar.', 'info');
+        };
+
+        // --- FILE UPLOAD LOGIC ---
+
+        /** Memicu input file tersembunyi */
+        window.triggerFileUpload = function(historyId) {
+            currentUploadHistoryId = historyId;
+            proofUploadInput.click();
+        };
+
+        /** Handler saat file dipilih */
+        proofUploadInput.addEventListener('change', (e) => {
+            const file = e.target.files[0];
+            if (!file || !currentUploadHistoryId) {
+                currentUploadHistoryId = null;
+                return;
+            }
+
+            // Batasan: File max 5MB (untuk simulasi, meskipun tidak disimpan di base64)
+            const MAX_SIZE = 5 * 1024 * 1024; 
+            if (file.size > MAX_SIZE) {
+                showMessage('Ukuran file maksimal 5MB.', 'error');
+                proofUploadInput.value = ''; // Reset input
+                currentUploadHistoryId = null;
+                return;
+            }
+            
+            // Mencari dan memperbarui entri riwayat
+            const index = historyData.findIndex(h => h.id === currentUploadHistoryId);
+            if (index !== -1) {
+                // Hapus URL objek sebelumnya jika ada
+                if (historyData[index].proofUrl) {
+                    URL.revokeObjectURL(historyData[index].proofUrl);
+                }
+
+                // Buat URL objek sementara (hanya berlaku selama sesi browser aktif)
+                const tempUrl = URL.createObjectURL(file);
+
+                // Simpan metadata (nama file dan URL objek TEMPORARY)
+                historyData[index].proofFileName = file.name;
+                historyData[index].proofUrl = tempUrl;
+                
+                localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(historyData));
+                renderHistory();
+                showMessage(`Bukti "${file.name}" berhasil di-upload sebagai penanda.`, 'success');
+            }
+
+            // Reset
+            proofUploadInput.value = '';
+            currentUploadHistoryId = null;
+        });
+
+
+        // --- HISTORY MANAGEMENT ---
+
+        /** Menyimpan data Surat Jalan saat ini ke riwayat (Simpan Manual) */
+        saveBtn.addEventListener('click', () => {
+            const divisi = document.getElementById('divisi_tujuan').value.trim();
+            const sender = senderSelect.value; // Ambil Pengirim
+            const keterangan = document.getElementById('keterangan').value.trim();
+
+            if (!divisi || !sender || currentItems.length === 0) {
+                showMessage('Divisi Tujuan, Pengirim, dan daftar barang tidak boleh kosong.', 'error');
+                return;
+            }
+
+            const totalQty = currentItems.reduce((sum, item) => sum + parseInt(item.qty), 0);
+            const sjNumber = getNewSuratJalanNumber();
+
+            const newHistoryEntry = {
+                id: crypto.randomUUID(),
+                sjNumber: sjNumber,
+                date: new Date().toLocaleDateString('id-ID', { year: 'numeric', month: 'long', day: 'numeric' }),
+                timestamp: new Date().getTime(), // Digunakan untuk sorting
+                divisiTujuan: divisi,
+                sender: sender, // Simpan Pengirim
+                keterangan: keterangan,
+                totalQty: totalQty,
+                items: JSON.parse(JSON.stringify(currentItems)), 
+                proofFileName: null, 
+                proofUrl: null 
+            };
+
+            historyData.push(newHistoryEntry);
+            localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(historyData));
+
+            // *** LOGIKA RESET FORM HANYA ADA DI SINI (SIMPAN MANUAL) ***
+            document.getElementById('divisi_tujuan').value = '';
+            document.getElementById('keterangan').value = '';
+            senderSelect.value = ''; 
+            senderSelect.dispatchEvent(new Event('change'));
+            currentItems = [];
+            renderCurrentItems();
+            renderHistory();
+
+            showMessage(`Surat Jalan ${sjNumber} berhasil disimpan ke riwayat dan formulir direset!`, 'success');
+        });
+        
+        /** Fungsi Sorting Riwayat */
+        function sortHistory(data) {
+            const { by, direction } = currentSort;
+
+            data.sort((a, b) => {
+                let aVal = a[by];
+                let bVal = b[by];
+
+                // Case-insensitive string comparison
+                if (typeof aVal === 'string' && typeof bVal === 'string') {
+                    aVal = aVal.toLowerCase();
+                    bVal = bVal.toLowerCase();
+                }
+
+                if (aVal < bVal) return direction === 'asc' ? -1 : 1;
+                if (aVal > bVal) return direction === 'asc' ? 1 : -1;
+                return 0;
+            });
+            return data;
+        }
+
+        /** Merender tabel riwayat pengiriman */
+        function renderHistory(searchTerm = '') {
+            historyTableBody.innerHTML = '';
+            const noHistoryMessage = document.getElementById('no-history-message');
+            if (noHistoryMessage) noHistoryMessage.style.display = 'none';
+
+            let filteredHistory = JSON.parse(JSON.stringify(historyData)); // Deep copy for sorting/filtering
+            
+            // 1. Filtering
+            if (searchTerm) {
+                const lowerCaseSearch = searchTerm.toLowerCase();
+                filteredHistory = filteredHistory.filter(entry =>
+                    entry.sjNumber.toLowerCase().includes(lowerCaseSearch) ||
+                    entry.divisiTujuan.toLowerCase().includes(lowerCaseSearch) ||
+                    entry.sender.toLowerCase().includes(lowerCaseSearch)
+                );
+            }
+            
+            // 2. Sorting
+            filteredHistory = sortHistory(filteredHistory);
+
+            // 3. Update Sort Icons
+            document.querySelectorAll('.sort-icon').forEach(icon => icon.textContent = '');
+            const activeIcon = document.querySelector(`.sort-icon[data-sort-by="${currentSort.by}"]`);
+            if (activeIcon) {
+                activeIcon.textContent = currentSort.direction === 'asc' ? '▲' : '▼';
+            }
+
+
+            if (filteredHistory.length === 0) {
+                if (noHistoryMessage) noHistoryMessage.style.display = 'block';
+                return;
+            }
+
+            // 4. Rendering
+            filteredHistory.forEach(entry => {
+                const proofStatus = entry.proofFileName 
+                    ? `<a href="${entry.proofUrl}" target="_blank" class="text-xs text-green-600 hover:text-green-800 hover:underline" title="Lihat Bukti (Temporary Link)">Bukti OK (${entry.proofFileName})</a>`
+                    : '<span class="text-xs text-red-500">Belum ada</span>';
+                
+                const uploadButton = entry.proofFileName
+                    ? `<button onclick="triggerFileUpload('${entry.id}')" class="text-yellow-600 hover:text-yellow-800 p-1 rounded-md hover:bg-yellow-100 transition duration-150 text-xs">Ubah Bukti</button>`
+                    : `<button onclick="triggerFileUpload('${entry.id}')" class="text-blue-600 hover:text-blue-800 p-1 rounded-md hover:bg-blue-100 transition duration-150 text-xs">Upload Bukti</button>`;
+
+
+                const row = historyTableBody.insertRow();
+                row.className = 'hover:bg-gray-50';
+                row.innerHTML = `
+                    <td class="px-6 py-3 whitespace-nowrap text-sm font-medium text-gray-900">${entry.sjNumber}</td>
+                    <td class="px-6 py-3 whitespace-nowrap text-sm text-gray-500">${entry.date}</td>
+                    <td class="px-6 py-3 whitespace-nowrap text-sm text-gray-500">${entry.sender}</td>
+                    <td class="px-6 py-3 whitespace-nowrap text-sm text-gray-500">${entry.divisiTujuan}</td>
+                    <td class="px-6 py-3 whitespace-nowrap text-center text-sm">
+                        ${proofStatus}
+                        <div class="mt-1">${uploadButton}</div>
+                    </td>
+                    <td class="px-6 py-3 whitespace-nowrap text-center text-sm font-medium">
+                        <button onclick="loadHistoryToForm('${entry.id}')" class="text-indigo-600 hover:text-indigo-900 mr-2 p-1 rounded-md hover:bg-indigo-100 transition duration-150">Edit/Load</button>
+                        <button onclick="deleteHistory('${entry.id}')" class="text-red-600 hover:text-red-900 p-1 rounded-md hover:bg-red-100 transition duration-150">Hapus</button>
+                    </td>
+                `;
+            });
+        }
+        
+        /** Menambahkan event listener untuk header kolom sorting */
+        document.querySelectorAll('.history-sort-header').forEach(header => {
+            header.addEventListener('click', function() {
+                const sortBy = this.getAttribute('data-sort-by');
+                
+                if (currentSort.by === sortBy) {
+                    // Toggle direction
+                    currentSort.direction = currentSort.direction === 'asc' ? 'desc' : 'asc';
+                } else {
+                    // New sort column, reset to descending (or ascending based on preference)
+                    currentSort.by = sortBy;
+                    currentSort.direction = 'desc'; 
+                }
+                
+                renderHistory(historySearch.value.trim());
+            });
+        });
+
+        /** Logika Ekspor CSV */
+        exportCsvBtn.addEventListener('click', () => {
+            if (historyData.length === 0) {
+                showMessage('Tidak ada data riwayat untuk diekspor.', 'error');
+                return;
+            }
+
+            // Headers for CSV
+            const headers = EXPECTED_CSV_HEADERS;
+            let csvContent = headers.join(";") + "\n"; // Use semicolon (;) as delimiter
+
+            historyData.forEach(entry => {
+                // Flatten item details into a single string
+                const itemDetails = entry.items.map(item => 
+                    `${item.name} (${item.qty} ${item.unit} | Kondisi: ${item.condition})`
+                ).join(" | ");
+
+                const row = [
+                    entry.sjNumber,
+                    entry.timestamp, // Timestamp is important for accurate import sorting
+                    entry.date,
+                    entry.sender,
+                    entry.divisiTujuan,
+                    entry.keterangan ? `"${entry.keterangan.replace(/"/g, '""')}"` : '', // Handle quotes
+                    entry.totalQty,
+                    entry.proofFileName || 'N/A',
+                    `"${itemDetails.replace(/"/g, '""')}"` // Handle quotes
+                ];
+                
+                // Join row elements with semicolon
+                csvContent += row.join(";") + "\n";
+            });
+
+            // Create Blob and download link
+            const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement('a');
+            link.setAttribute('href', url);
+            link.setAttribute('download', `Riwayat_Surat_Jalan_${new Date().toISOString().slice(0, 10)}.csv`);
+            link.style.visibility = 'hidden';
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+            
+            showMessage('Data riwayat berhasil diekspor ke CSV!', 'success');
+        });
+
+        /** Logika Impor CSV (NEW) */
+        importCsvBtn.addEventListener('click', () => {
+            // Memicu input file tersembunyi
+            importCsvInput.click();
+        });
+
+        importCsvInput.addEventListener('change', (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+
+            const reader = new FileReader();
+            reader.onload = function(event) {
+                try {
+                    const csvText = event.target.result;
+                    processCSV(csvText);
+                } catch (error) {
+                    showMessage(`Gagal memproses file CSV: ${error.message}`, 'error');
+                }
+                // Reset input file agar event change bisa terulang jika file yang sama dipilih lagi
+                importCsvInput.value = ''; 
+            };
+            reader.onerror = () => {
+                showMessage('Gagal membaca file.', 'error');
+            };
+            
+            reader.readAsText(file);
+        });
+
+        /** Memproses teks CSV menjadi data riwayat */
+        function processCSV(csvText) {
+            // Split baris (menggunakan regex untuk menangani berbagai jenis line break)
+            const lines = csvText.split(/\r\n|\n/);
+            if (lines.length < 2) {
+                throw new Error("File CSV kosong atau hanya berisi header.");
+            }
+
+            // Header selalu baris pertama (gunakan ; sebagai pemisah)
+            const headers = lines[0].split(';');
+            
+            // Validasi Header
+            if (headers.length !== EXPECTED_CSV_HEADERS.length || 
+                !headers.every((h, i) => h.trim() === EXPECTED_CSV_HEADERS[i].trim())) {
+                throw new Error(`Format header CSV tidak sesuai. Diharapkan: ${EXPECTED_CSV_HEADERS.join(';')} Tapi ditemukan: ${headers.join(';')}`);
+            }
+
+            const importedEntries = [];
+            const detailBarangIndex = headers.indexOf("Detail Barang");
+            
+            for (let i = 1; i < lines.length; i++) {
+                let line = lines[i].trim();
+                if (!line) continue;
+
+                // Simple parser for semicolon-separated values, attempting to handle quoted fields
+                const row = [];
+                let inQuote = false;
+                let currentField = '';
+
+                for (let j = 0; j < line.length; j++) {
+                    const char = line[j];
+
+                    if (char === '"' && (j === 0 || line[j-1] === ';' || line[j-1] === '')) {
+                        // Start of quote (at start or after semicolon)
+                        inQuote = true;
+                    } else if (char === '"' && (j === line.length - 1 || line[j+1] === ';')) {
+                        // End of quote (at end or before semicolon)
+                        inQuote = false;
+                    } else if (char === '"' && inQuote) {
+                        // Escaped quote: "" (replace with single quote)
+                        currentField += '"';
+                        j++; // Skip next quote
+                    } else if (char === ';' && !inQuote) {
+                        // Separator outside of quotes
+                        row.push(currentField.trim());
+                        currentField = '';
+                    } else {
+                        currentField += char;
+                    }
+                }
+                row.push(currentField.trim());
+                
+                if (row.length !== EXPECTED_CSV_HEADERS.length) {
+                     // Ini mungkin terjadi jika ada data item yang kompleks dan parser sederhana gagal.
+                     // Untuk tujuan demo, kita akan lewati baris ini dan mencatatnya.
+                     console.warn(`Baris ${i + 1} dilewati karena jumlah kolom tidak sesuai: ${row.length} vs ${EXPECTED_CSV_HEADERS.length}`);
+                     continue;
+                }
+
+                // Parse Detail Barang
+                const detailStr = row[detailBarangIndex].replace(/^"|"$/g, '').replace(/""/g, '"'); // Remove surrounding quotes and unescape double quotes
+                const items = parseItemDetails(detailStr);
+                
+                // Construct new entry
+                const entry = {
+                    id: crypto.randomUUID(), // Beri ID baru agar tidak konflik
+                    sjNumber: row[0],
+                    timestamp: parseInt(row[1]) || new Date().getTime(),
+                    date: row[2],
+                    sender: row[3],
+                    divisiTujuan: row[4],
+                    keterangan: row[5].replace(/^"|"$/g, '').replace(/""/g, '"') || '', // Remove quotes, unescape
+                    totalQty: parseInt(row[6]) || 0,
+                    proofFileName: row[7] !== 'N/A' ? row[7] : null,
+                    proofUrl: null, // URL bukti tidak dapat diimpor, harus diunggah ulang
+                    items: items
+                };
+
+                importedEntries.push(entry);
+            }
+            
+            // Gabungkan data: Filter out existing SJ numbers and then merge
+            const existingSjNumbers = new Set(historyData.map(h => h.sjNumber));
+            const uniqueNewEntries = importedEntries.filter(entry => 
+                !existingSjNumbers.has(entry.sjNumber)
+            );
+            
+            historyData = [...historyData, ...uniqueNewEntries];
+            localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(historyData));
+            
+            renderHistory();
+            showMessage(`${uniqueNewEntries.length} entri riwayat berhasil diimpor! (${importedEntries.length - uniqueNewEntries.length} duplikat dilewati).`, 'success');
+        }
+        
+        /** Memproses string detail barang menjadi array objek */
+        function parseItemDetails(detailStr) {
+            const items = [];
+            if (!detailStr) return items;
+
+            // Memecah berdasarkan pemisah ' | '
+            const itemTokens = detailStr.split(' | ');
+            
+            itemTokens.forEach(token => {
+                const match = token.match(/(.+) \((\d+) (.+) \| Kondisi: (.+)\)/);
+                if (match) {
+                    items.push({
+                        id: crypto.randomUUID(),
+                        name: match[1].trim(),
+                        qty: parseInt(match[2]),
+                        unit: match[3].trim(),
+                        condition: match[4].trim()
+                    });
+                }
+            });
+            return items;
+        }
+
+
+        /** Memuat riwayat ke form untuk di-edit/dijadikan surat jalan baru */
+        window.loadHistoryToForm = function(id) {
+            const entry = historyData.find(h => h.id === id);
+            if (!entry) return;
+
+            // Load details
+            document.getElementById('divisi_tujuan').value = entry.divisiTujuan;
+            document.getElementById('keterangan').value = entry.keterangan || '';
+            senderSelect.value = entry.sender; // Load Pengirim
+            senderSelect.dispatchEvent(new Event('change')); // Trigger change event
+
+            // Load items
+            currentItems = JSON.parse(JSON.stringify(entry.items));
+            renderCurrentItems();
+
+            showMessage(`Surat Jalan ${entry.sjNumber} dimuat ke form untuk diedit/dicetak.`, 'info');
+            window.scrollTo(0, 0); 
+            
+            // Otomatis tampilkan riwayat setelah memuat entri
+            if (!isHistoryVisible) {
+                toggleHistoryVisibility();
+            }
+        };
+
+        /** Menghapus riwayat pengiriman */
+        window.deleteHistory = function(id) {
+            // Mengganti window.confirm dengan konfirmasi custom (sesuai instruksi)
+            const result = window.prompt(`Yakin ingin menghapus riwayat Surat Jalan ini?\nKetik 'YA' (huruf kapital) untuk melanjutkan.`);
+            
+            if (result === 'YA') {
+                const entryIndex = historyData.findIndex(h => h.id === id);
+                if (entryIndex !== -1) {
+                    if (historyData[entryIndex].proofUrl) {
+                        URL.revokeObjectURL(historyData[entryIndex].proofUrl);
+                    }
+                    historyData.splice(entryIndex, 1);
+                }
+                
+                localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(historyData));
+                renderHistory();
+                showMessage('Riwayat berhasil dihapus.', 'info');
+            }
+        };
+
+        // --- GENERATE AND PRINT SURAT JALAN ---
+
+        /** Membuat konten HTML Surat Jalan siap cetak */
+        function generateSuratJalanContent() {
+            const divisi = document.getElementById('divisi_tujuan').value.trim();
+            const sender = senderSelect.value;
+            const keterangan = document.getElementById('keterangan').value.trim() || '-';
+
+            if (!divisi || !sender || currentItems.length === 0) {
+                showMessage('Divisi Tujuan, Pengirim, dan daftar barang tidak boleh kosong untuk Generate Surat Jalan.', 'error');
+                return null;
+            }
+            
+            // Cek apakah tanda tangan pengirim sudah ada
+            const senderSignatureData = signatures[sender];
+            if (!senderSignatureData) {
+                 showMessage(`Tanda tangan untuk pengirim "${sender}" belum disimpan. Harap simpan tanda tangan melalui tombol "Atur Tanda Tangan".`, 'error');
+                 return null;
+            }
+
+            const totalQty = currentItems.reduce((sum, item) => sum + parseInt(item.qty), 0);
+            const sjNumber = getNewSuratJalanNumber(); // Generate SJ number even if not saved yet
+            const date = new Date().toLocaleDateString('id-ID', { year: 'numeric', month: 'long', day: 'numeric' });
+
+            // Generate table rows
+            const itemRows = currentItems.map((item, index) => `
+                <tr class="h-10">
+                    <td class="print-table-cell text-center">${index + 1}</td>
+                    <td class="print-table-cell pl-4">${item.name}</td>
+                    <td class="print-table-cell text-center">${item.qty}</td>
+                    <td class="print-table-cell text-center">${item.unit}</td>
+                    <td class="print-table-cell pl-4">${item.condition}</td>
+                </tr>
+            `).join('');
+
+            return {
+                sjNumber,
+                sender,
+                html: `
+                    <div class="space-y-6">
+                        <!-- Header -->
+                        <div class="flex justify-between items-start border-b-2 border-gray-700 pb-4">
+                            <div class="flex items-center">
+                                <!-- Logo Placeholder -->
+                                <img src="https://placehold.co/100x50/3b82f6/ffffff?text=LOGO+PERUSAHAAN" alt="Logo Perusahaan" class="h-12 mr-4 object-contain" />
+                                <div>
+                                    <h1 class="text-2xl font-extrabold text-gray-800">SURAT JALAN</h1>
+                                    <p class="text-sm text-gray-600">PT. LOGISTIK JAYA ABADI</p>
+                                </div>
+                            </div>
+                            <div class="text-right text-sm">
+                                <p><strong>No. SJ:</strong> <span id="print-sj-number">${sjNumber}</span></p>
+                                <p><strong>Tanggal:</strong> ${date}</p>
+                            </div>
+                        </div>
+
+                        <!-- Detail Pengiriman -->
+                        <div class="grid grid-cols-2 text-sm">
+                            <div>
+                                <p class="font-semibold">Dikirim Kepada:</p>
+                                <p class="border-b border-dashed inline-block">${divisi}</p>
+                            </div>
+                            <div class="text-right">
+                                <p class="font-semibold">Keterangan Tambahan:</p>
+                                <p class="border-b border-dashed inline-block">${keterangan}</p>
+                            </div>
+                        </div>
+
+                        <!-- Tabel Barang -->
+                        <table class="min-w-full text-sm border-collapse print-table" style="border-collapse: collapse;"> 
+                            <thead>
+                                <tr class="bg-gray-100 text-gray-700">
+                                    <th class="print-table-cell w-10 text-center font-bold p-2">No.</th>
+                                    <th class="print-table-cell font-bold p-2 text-left pl-4">Nama Barang</th>
+                                    <th class="print-table-cell w-20 text-center font-bold p-2">Qty</th>
+                                    <th class="print-table-cell w-20 text-center font-bold p-2">Satuan</th>
+                                    <th class="print-table-cell w-32 font-bold p-2 text-left pl-4">Kondisi</th>
+                                </tr>
+                            </thead>
+                            <tbody id="print-items-body">
+                                ${itemRows}
+                            </tbody>
+                            <tfoot>
+                                <tr>
+                                    <td colspan="2" class="print-table-cell text-right font-bold p-2 bg-gray-50">TOTAL KESELURUHAN QTY</td>
+                                    <td class="print-table-cell text-center font-bold p-2 text-blue-700 bg-gray-50">${totalQty}</td>
+                                    <td colspan="2" class="print-table-cell"></td>
+                                </tr>
+                            </tfoot>
+                        </table>
+
+                        <!-- Footer Tanda Tangan & Barcode -->
+                        <div class="flex justify-between mt-12 text-center text-sm">
+                            <div class="w-1/3">
+                                <p>Hormat Kami,</p>
+                                <!-- Tanda Tangan Otomatis, UKURAN SUDAH DISESUAIKAN menjadi h-12 (sekitar 48px) -->
+                                <div class="h-12 mt-1 flex justify-center items-center"> 
+                                    <img src="${senderSignatureData}" alt="Tanda Tangan Pengirim" class="h-full object-contain" onerror="this.style.display='none'; this.closest('div').classList.add('border-b', 'border-gray-400', 'w-3/4', 'mx-auto');">
+                                </div>
+                                <p class="mt-2 font-semibold">(${sender})</p>
+                                <p>Pengirim</p>
+                            </div>
+                            <div class="w-1/3">
+                                <p>Diterima Oleh,</p>
+                                <div class="h-16 mt-8 border-b border-gray-400 mx-auto w-3/4"></div>
+                                <p>Penerima</p>
+                            </div>
+                            <div class="w-1/3">
+                                <!-- TARGET BARCODE SVG - Akan diisi oleh JsBarcode di JS -->
+                                <svg id="barcode-target" class="mx-auto" style="max-width: 90%; height: 80px;"></svg> 
+                                <p class="text-xs mt-1">Verifikasi No. SJ: ${sjNumber}</p>
+                            </div>
+                        </div>
+
+                        <p class="text-xs mt-6 text-gray-500 text-center border-t pt-2">
+                            *Catatan: Harap periksa barang dengan seksama. Komplain setelah 1x24 jam tidak akan dilayani.
+                        </p>
+                    </div>
+                `
+            };
+        }
+
+        /** Handler untuk Generate & Print Surat Jalan */
+        generateBtn.addEventListener('click', () => {
+            const result = generateSuratJalanContent();
+            if (result) {
+                // 1. Masukkan konten HTML ke area cetak tersembunyi
+                document.getElementById('sj-document').innerHTML = result.html;
+
+                // 2. Generate Barcode ke dalam elemen SVG
+                const sjNumber = result.sjNumber;
+                try {
+                    JsBarcode("#barcode-target", sjNumber, {
+                        format: "CODE128", 
+                        displayValue: false, 
+                        height: 60,
+                        width: 1.0, 
+                        margin: 5
+                    });
+                } catch (e) {
+                    console.error("Gagal membuat barcode:", e);
+                    showMessage("Error: Gagal membuat Barcode. Cek console untuk detail.", 'error');
+                }
+                
+                // 3. HANYA CETAK, TIDAK LAGI OTOMATIS MENYIMPAN DAN MERESET FORM
+                window.print();
+                
+                showMessage(`Surat Jalan ${sjNumber} siap dicetak. Data di formulir masih UTUH.`, 'info');
+            }
+        });
+        
+        // --- Event Listeners ---
+        toggleHistoryBtn.addEventListener('click', toggleHistoryVisibility);
+
+        // --- Initialization ---
+
+        // Panggil saat halaman dimuat
+        window.onload = function() {
+            populateSenderSelect();
+            renderCurrentItems();
+            renderHistory();
+            renderMasterItems(); // Load master items on start
+            
+            // Optional: Hide print-area on load
+            document.getElementById('print-area').style.display = 'none';
+
+             // Listener untuk pencarian
+            historySearch.addEventListener('input', (e) => {
+                renderHistory(e.target.value.trim());
+            });
+            
+            // Pastikan riwayat disembunyikan saat aplikasi dimuat
+            historyContent.classList.add('hidden'); 
+            toggleHistoryBtn.textContent = 'Tampilkan Riwayat'; // Pastikan teks tombol benar
+        };
+
+        // --- Konfirmasi Penghapusan (Pengganti confirm()) ---
+        // Sesuai instruksi, menggunakan window.prompt sebagai pengganti window.confirm
+        window.confirm = (message) => {
+            const result = window.prompt(`Konfirmasi: ${message}\nKetik 'YA' (huruf kapital) untuk melanjutkan.`);
+            return result === 'YA';
+        };
+
+    </script>
+</body>
+</html>
